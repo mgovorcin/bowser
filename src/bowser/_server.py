@@ -50,14 +50,12 @@ class BowserServer:
         port: int = 0,
         ignore_sidecar_files: bool = False,
         no_spatial_reference: bool = False,
-        no_recommended_mask: bool = False,
     ):
         self.stack_file = stack_file
         self.rasters_file = rasters_file or "bowser_rasters.json"
         self.port = port or _find_available_port(8000)
         self.ignore_sidecar_files = ignore_sidecar_files
         self.no_spatial_reference = no_spatial_reference
-        self.no_recommended_mask = no_recommended_mask
 
         self._server: uvicorn.Server | None = None
         self._thread: threading.Thread | None = None
@@ -83,9 +81,6 @@ class BowserServer:
 
         os.environ["BOWSER_SPATIAL_REFERENCE_DISP"] = (
             "NO" if self.no_spatial_reference else "YES"
-        )
-        os.environ["BOWSER_USE_RECOMMENDED_MASK"] = (
-            "NO" if self.no_recommended_mask else "YES"
         )
 
         # If port was 0, find an available one
@@ -154,7 +149,6 @@ def running(
     port: int = 0,
     ignore_sidecar_files: bool = False,
     no_spatial_reference: bool = False,
-    no_recommended_mask: bool = False,
 ):
     """Context manager for running a Bowser server.
 
@@ -165,7 +159,6 @@ def running(
         port: Port to run on (0 for automatic)
         ignore_sidecar_files: Ignore GDAL sidecar files
         no_spatial_reference: Don't use spatial reference for displacement
-        no_recommended_mask: Don't use recommended mask
 
     Yields:
     ------
@@ -177,7 +170,6 @@ def running(
         port=port,
         ignore_sidecar_files=ignore_sidecar_files,
         no_spatial_reference=no_spatial_reference,
-        no_recommended_mask=no_recommended_mask,
     )
     try:
         server.start()

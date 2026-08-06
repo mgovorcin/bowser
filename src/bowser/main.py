@@ -33,6 +33,7 @@ from starlette_cramjam.middleware import CompressionMiddleware
 from .config import settings
 from .state import BowserState, DatasetRegistry
 from .utils import (
+    _uses_spatial_reference,
     calculate_trend,
     desensitize_mpl_case,
     generate_colorbar,
@@ -61,9 +62,7 @@ logger = logging.getLogger("bowser")
 warnings.filterwarnings(
     "ignore", category=RuntimeWarning, message="invalid value encountered in cast"
 )
-warnings.filterwarnings(
-    "ignore", message="Dataset has no geotransform, gcps, or rpcs"
-)
+warnings.filterwarnings("ignore", message="Dataset has no geotransform, gcps, or rpcs")
 warnings.filterwarnings(
     "ignore", category=RuntimeWarning, message="invalid value encountered in divide"
 )
@@ -353,17 +352,9 @@ def create_xarray_dataset_info(ds: xr.Dataset) -> dict:
     for var_name, var in ds.data_vars.items():
         if not {"x", "y"}.issubset(set(var.dims)):
             continue
-        _vn = str(var_name).lower()
         use_moving_reference = (
-            (
-                "displacement" in _vn
-                and "short_wave" not in _vn
-            )
-            or "velocity" in _vn
-            or "unwrapped" in _vn
-            or "timeseries" in _vn
-            or "time_series" in _vn
-        ) and not skip_spatial_reference
+            _uses_spatial_reference(str(var_name), var) and not skip_spatial_reference
+        )
         available_mask_vars = [
             v
             for v in ["temporal_coherence", "phase_similarity", "recommended_mask"]
@@ -539,7 +530,9 @@ def _apply_layer_masks_md(
             if time_idx is not None:
                 safe_idx = min(time_idx, mask_da.sizes[mdim] - 1)
             else:
-                safe_idx = 0  # no time context: use first frame as a static spatial mask
+                safe_idx = (
+                    0  # no time context: use first frame as a static spatial mask
+                )
             mask_da = mask_da.isel({mdim: safe_idx})
         if mode == "max":
             da = da.where(mask_da <= threshold)
@@ -1267,9 +1260,7 @@ async def extract_profile(
         except Exception:
             return None
 
-    def _read_lonlat_batch(
-        lons: np.ndarray, lats: np.ndarray
-    ) -> np.ndarray:
+    def _read_lonlat_batch(lons: np.ndarray, lats: np.ndarray) -> np.ndarray:
         """Read many values at once. NaN for nodata/out-of-bounds.
 
         In MD/zarr mode this collapses ~N pyproj transforms and N xarray
@@ -1287,19 +1278,25 @@ async def extract_profile(
                 if dim is not None and time_index < da.sizes[dim]:
                     da = da.isel({dim: time_index})
                 xs, ys = state.transformer_from_lonlat.transform(lons, lats)
-                pts = xr.DataArray(
-                    np.arange(lons.size), dims="pt", name="pt"
+                pts = xr.DataArray(np.arange(lons.size), dims="pt", name="pt")
+                xs_da = xr.DataArray(
+                    np.asarray(xs, dtype=float), dims="pt", coords={"pt": pts}
                 )
-                xs_da = xr.DataArray(np.asarray(xs, dtype=float), dims="pt", coords={"pt": pts})
-                ys_da = xr.DataArray(np.asarray(ys, dtype=float), dims="pt", coords={"pt": pts})
+                ys_da = xr.DataArray(
+                    np.asarray(ys, dtype=float), dims="pt", coords={"pt": pts}
+                )
                 # Bounds check: xarray sel(nearest) will pick edge pixels for
                 # points well outside the array; filter those out as NaN.
-                xmin = float(da.x.min()); xmax = float(da.x.max())
-                ymin = float(da.y.min()); ymax = float(da.y.max())
+                xmin = float(da.x.min())
+                xmax = float(da.x.max())
+                ymin = float(da.y.min())
+                ymax = float(da.y.max())
                 vals = da.sel(x=xs_da, y=ys_da, method="nearest").values.astype(float)
                 in_bounds = (
-                    (xs_da.values >= xmin) & (xs_da.values <= xmax)
-                    & (ys_da.values >= ymin) & (ys_da.values <= ymax)
+                    (xs_da.values >= xmin)
+                    & (xs_da.values <= xmax)
+                    & (ys_da.values >= ymin)
+                    & (ys_da.values <= ymax)
                 )
                 vals[~in_bounds] = np.nan
                 return vals
@@ -1315,7 +1312,9 @@ async def extract_profile(
                 for i in range(lons.size):
                     try:
                         out[i] = float(
-                            np.atleast_1d(reader.read_lonlat(float(lons[i]), float(lats[i])))[0]
+                            np.atleast_1d(
+                                reader.read_lonlat(float(lons[i]), float(lats[i]))
+                            )[0]
                         )
                     except Exception:
                         out[i] = np.nan
@@ -1392,7 +1391,9 @@ async def extract_profile(
                 perp_az = bearings + 90.0
                 # geod.fwd accepts arrays; tile lon/lat per offset.
                 for off in perp_offsets_dense:
-                    o_lon, o_lat, _ = geod.fwd(clons, clats, perp_az, np.full_like(clons, off))
+                    o_lon, o_lat, _ = geod.fwd(
+                        clons, clats, perp_az, np.full_like(clons, off)
+                    )
                     lon_chunks.append(np.asarray(o_lon, dtype=float))
                     lat_chunks.append(np.asarray(o_lat, dtype=float))
 
@@ -1404,7 +1405,9 @@ async def extract_profile(
                     lon_chunks.append(clons)
                     lat_chunks.append(clats)
                 else:
-                    o_lon, o_lat, _ = geod.fwd(clons, clats, bearings + 90.0, np.full_like(clons, off))
+                    o_lon, o_lat, _ = geod.fwd(
+                        clons, clats, bearings + 90.0, np.full_like(clons, off)
+                    )
                     lon_chunks.append(np.asarray(o_lon, dtype=float))
                     lat_chunks.append(np.asarray(o_lat, dtype=float))
 
@@ -1664,15 +1667,11 @@ def _build_masked_md_dataarray(
     the threshold layer masks, and an uploaded custom mask.
     """
     da = ds[variable]
-    skip_recommended_mask = not settings.BOWSER_USE_RECOMMENDED_MASK
-    if mask_variable is not None:
-        mask_da = ds[mask_variable]
-    elif variable == "displacement" and (
-        "recommended_mask" in ds.data_vars and not skip_recommended_mask
-    ):
-        mask_da = ds["recommended_mask"]
-    else:
-        mask_da = None
+    # Masking is opt-in: nothing is hidden unless the caller asks for it, via
+    # ``mask_variable`` or the ``layer_masks`` the UI's Masking panel sends.
+    # ``recommended_mask`` is offered in ``available_mask_vars`` like any other
+    # mask layer, so the masked view is one click away rather than the default.
+    mask_da = ds[mask_variable] if mask_variable is not None else None
 
     # Resolve the per-variable non-spatial dim (was hardcoded "time")
     if time_idx is not None:
@@ -1765,7 +1764,9 @@ def _build_masked_cog_dataarray(
                     continue
                 fl = target.raster_groups[name].file_list
                 if fl:
-                    da = _keep(da, fl[min(idx, len(fl) - 1)], float(m.get("threshold", 0.5)))
+                    da = _keep(
+                        da, fl[min(idx, len(fl) - 1)], float(m.get("threshold", 0.5))
+                    )
         except json.JSONDecodeError as e:
             logger.warning(f"Failed to parse layer_masks JSON: {e}")
 
@@ -1836,7 +1837,9 @@ def export_geotiff(
     variable: str = Query(..., description="Variable / active layer name"),
     dataset: Optional[str] = Query(None, description="Catalog dataset id"),
     time_idx: Optional[int] = Query(None, description="Time index"),
-    mask_variable: Optional[str] = Query(None, description="Override mask variable (MD)"),
+    mask_variable: Optional[str] = Query(
+        None, description="Override mask variable (MD)"
+    ),
     mask_min_value: Optional[float] = Query(None, description="Primary mask threshold"),
     layer_masks: Optional[str] = Query(
         None, description="JSON list of {dataset,threshold,mode} mask dicts"
@@ -1854,8 +1857,8 @@ def export_geotiff(
     one 2-D slice for ``time_idx``.
     """
     import tempfile  # noqa: PLC0415
-    import rioxarray  # noqa: F401, PLC0415 — registers the .rio accessor
 
+    import rioxarray  # noqa: F401, PLC0415 — registers the .rio accessor
     from starlette.background import BackgroundTask  # noqa: PLC0415
     from starlette.responses import FileResponse  # noqa: PLC0415
 

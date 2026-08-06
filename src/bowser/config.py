@@ -33,7 +33,6 @@ class Settings(BaseSettings):
 
     # --- runtime behaviour flags (previously read via os.getenv "YES"/"NO") ---
     BOWSER_USE_SPATIAL_REFERENCE_DISP: bool = True
-    BOWSER_USE_RECOMMENDED_MASK: bool = True
 
     # SECRET_KEY: str = secrets.token_urlsafe(32)
     # SERVER_NAME: str

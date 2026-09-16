@@ -76,12 +76,6 @@ def cli_app():
     help="Don't add a moving spatial reference point for `displacement` ",
 )
 @click.option(
-    "--no-recommended-mask",
-    "--no-mask",
-    is_flag=True,
-    help="Don't use recommended mask for `displacement` ",
-)
-@click.option(
     "--title",
     default="",
     help="Title to display on the map.",
@@ -121,7 +115,6 @@ def run(
     log_level,
     ignore_sidecar_files,
     no_spatial_reference,
-    no_recommended_mask,
     title,
     ssl_certfile,
     ssl_keyfile,
@@ -143,7 +136,6 @@ def run(
     os.environ["BOWSER_USE_SPATIAL_REFERENCE_DISP"] = str(
         not no_spatial_reference
     ).lower()
-    os.environ["BOWSER_USE_RECOMMENDED_MASK"] = str(not no_recommended_mask).lower()
     # Only override when the flag is given; otherwise leave any existing
     # BOWSER_S3_ANON env (and the anon-by-default) untouched.
     if s3_anon is not None:
@@ -333,6 +325,7 @@ def setup_dolphin(
     Saves to `output` JSON file.
     """
     from .titiler import Algorithm, RasterGroup, _find_files
+
     include_ifgs = True
 
     def _glob(g):
@@ -551,8 +544,7 @@ def setup_dolphin(
             )
     if not mean_amplitude:
         dolphin_outputs = [
-            g for g in dolphin_outputs
-            if g.get("name") != "Normalized amplitude"
+            g for g in dolphin_outputs if g.get("name") != "Normalized amplitude"
         ]
     if timeseries_mask is not None:
         # Timeseries
